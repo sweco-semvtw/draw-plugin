@@ -30,6 +30,16 @@ swDefaults.strokeColorArr = rgbToArray(swDefaults.strokeColor, swDefaults.stroke
 function createRegularShape(type, size, fill, stroke) {
   let style;
   switch (type) {
+    case 'pin':
+      style = new Origo.ol.style.Style({
+        image: new Origo.ol.style.Icon({
+          anchor: [0.5, 32],
+          anchorXUnits: 'fraction',
+          anchorYUnits: 'pixels',
+          src: 'img/png/drop_blue.png'
+        })
+      });
+      break;
     case 'square':
       style = new Origo.ol.style.Style({
         image: new Origo.ol.style.RegularShape({

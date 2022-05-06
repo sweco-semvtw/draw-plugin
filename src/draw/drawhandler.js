@@ -1,10 +1,14 @@
 import Origo from 'Origo';
 import $ from 'jquery';
+import { Overlay } from 'ol';
 import dispatcher from './drawdispatcher';
 import defaultDrawStyle from './drawstyle';
 import shapes from './shapes';
 import { restoreStylewindow, updateStylewindow, getStylewindowStyle } from './stylewindow';
+import Popup from './popup';
 
+let viewer;
+let mapstateMarkers = [];
 let map;
 let drawSource;
 let drawLayer;
@@ -14,6 +18,7 @@ let select;
 let modify;
 let annotationField;
 let Style;
+const name = 'drawplugin';
 
 const selectionStyle = new Origo.ol.style.Style({
   image: new Origo.ol.style.Circle({
@@ -40,6 +45,55 @@ const selectionStyle = new Origo.ol.style.Style({
   }
 });
 
+function createCoordsId(coords) {
+  return `${coords[0].toString().replaceAll('.', '')}-${coords[0].toString().replaceAll('.', '')}`;
+}
+
+function createContent() {
+  return '<p>Titel:</p>'
+  + '<input id="popupTitle" type="text" />'
+  + '<p>Beskrivning:</p>'
+  + '<textarea id="popupDescription"></textarea>'
+  + '<button id="addPopupButton" class="grey-lightest float-right rounded-large" type="button">Spara</button>';
+}
+
+function reopenPopup({ coords }) {
+  const coordsId = createCoordsId(coords);
+  document.querySelector(`#o-popup-${coordsId}`).style.display = 'block';
+}
+
+function addPopup({ title, description, coords }) {
+  const coordsId = createCoordsId(coords);
+  const popup = new Popup(`#${viewer.getId()}`, coordsId);
+  popup.setContent({
+    content: description,
+    title,
+    coordsId
+  });
+
+  const popupEl = popup.getEl(coordsId);
+  const popupHeight = document.querySelector(`#o-popup-${coordsId}`).offsetHeight + 10;
+  const popupWidth = document.querySelector(`#o-popup-${coordsId} .o-popup`).offsetWidth;
+  popupEl.style.height = `${popupHeight}px`;
+  popupEl.style.width = `${popupWidth}px`;
+  const overlay = new Overlay({
+    element: popupEl,
+    autoPan: {
+      margin: 55,
+      animation: {
+        duration: 500
+      }
+    },
+    positioning: 'bottom-center'
+  });
+  viewer.getMap().addOverlay(overlay);
+  overlay.setPosition(coords);
+}
+
+function createSharedMarkers() {
+  mapstateMarkers.forEach((obj) => addPopup(obj));
+}
+
 function disableDoubleClickZoom(evt) {
   const featureType = evt.feature.getGeometry().getType();
   const interactionsToBeRemoved = [];
@@ -61,6 +115,25 @@ function disableDoubleClickZoom(evt) {
 function onDrawStart(evt) {
   if (evt.feature.getGeometry().getType() !== 'Point') {
     disableDoubleClickZoom(evt);
+  }
+  if (evt.feature.getGeometry().getType() === 'Point') {
+    const coords = evt.feature.getGeometry().getCoordinates();
+    const modal = Origo.ui.Modal({
+      title: 'Ange titel och beskrivning',
+      content: createContent(),
+      target: viewer.getId()
+    });
+    document.getElementById('addPopupButton').addEventListener('click', () => {
+      const title = document.getElementById('popupTitle').value;
+      const description = document.getElementById('popupDescription').value;
+
+      if (title.length > 0 || description.length > 0) {
+        const obj = { title, description, coords };
+        addPopup(obj);
+        mapstateMarkers.push(obj);
+      }
+      modal.closeModal();
+    });
   }
 }
 
@@ -159,6 +232,10 @@ function onDeleteSelected() {
     source = drawLayer.getFeatureStore();
     features.forEach((feature) => {
       source.removeFeature(feature);
+      const coords = feature.getGeometry().getCoordinates();
+      mapstateMarkers = mapstateMarkers.filter((marker) => marker.coords[0] !== coords[0] && marker.coords[1] !== coords[1]);
+      const coordsId = createCoordsId(coords);
+      document.querySelector(`#o-popup-${coordsId}`).remove();
     });
     select.getFeatures().clear();
   }
@@ -225,6 +302,11 @@ function getState() {
   }
 
   return undefined;
+}
+
+function addToMapState(mapState) {
+  // eslint-disable-next-line no-param-reassign
+  mapState[name] = mapstateMarkers;
 }
 
 function restoreState(state) {
@@ -316,6 +398,28 @@ const init = function init(optOptions) {
   Style = Origo.Style;
 
   map = options.viewer.getMap();
+
+  const sharemap = viewer.getControlByName('sharemap');
+  if (sharemap && sharemap.options.storeMethod === 'saveStateToServer') {
+    sharemap.addParamsToGetMapState(name, addToMapState);
+  }
+
+  const urlParams = viewer.getUrlParams();
+  if (urlParams[name] && urlParams[name].length > 0) {
+    mapstateMarkers = urlParams[name];
+    createSharedMarkers();
+  }
+
+  map.on('click', (event) => {
+    map.forEachFeatureAtPixel(event.pixel, (feature) => {
+      const type = feature.getGeometry().getType();
+      if (type === 'Point') {
+        const coords = feature.getGeometry().getCoordinates();
+        const newArr = mapstateMarkers.filter((marker) => marker.coords[0] === coords[0] && marker.coords[1] === coords[1]);
+        newArr.forEach((obj) => reopenPopup(obj));
+      }
+    });
+  });
 
   annotationField = options.annotation || 'annonation';
   activeTool = undefined;
